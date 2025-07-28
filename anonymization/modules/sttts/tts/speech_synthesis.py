@@ -1,6 +1,12 @@
-from tqdm import tqdm
 import soundfile
 import time
+import logging
+import resampy
+import torch
+import numpy as np
+import soundfile as sf
+from tqdm import tqdm
+from pathlib import Path
 from torch.multiprocessing import Pool, set_start_method
 from itertools import repeat
 
@@ -10,8 +16,8 @@ from utils import create_clean_dir, setup_logger
 set_start_method('spawn', force=True)
 logger = setup_logger(__name__)
 
-class SpeechSynthesis:
 
+class SpeechSynthesis:
     def __init__(self, devices, settings, model_dir=None, results_dir=None, save_output=True, force_compute=False):
         self.devices = devices
         self.output_sr = settings.get('output_sr', 16000)
@@ -143,3 +149,80 @@ def synthesis_job(instances, tts_model, out_dir, sleep, text_is_phones=False, sa
     return wavs
 
 
+@torch.no_grad()
+def synthesize_speech(
+        device,
+        texts,
+        prosody,
+        speaker_embeddings,
+        tts_model,
+        tts_samplerate,
+        pros_samplerate,
+        out_samplerate,
+        result_dir,
+):
+    result_dir = Path(result_dir).absolute()
+    if not result_dir.exists():
+        logging.info(f'Creating directory {result_dir}')
+        result_dir.mkdir(parents=True, exist_ok=True)
+
+    tts_model = tts_model.to(device)
+    tts_model.eval()
+
+    logging.info(f'Synthesize {len(texts)} utterances...')
+    wav_scp = list()
+    for text, utt, speaker in tqdm(texts):
+        speaker_embedding = speaker_embeddings.get_embedding_for_identifier(utt)
+        utt_prosody_dict = prosody.get_instance(utt)
+        duration = utt_prosody_dict['duration']
+        pitch = utt_prosody_dict['pitch']
+        energy = utt_prosody_dict['energy']
+        speaker_embedding = speaker_embedding.to(device)
+        tts_model.default_utterance_embedding = speaker_embedding
+        samples = tts_model(
+            text=text,
+            text_is_phonemes=texts.is_phones,
+            durations=duration,
+            pitch=pitch,
+            energy=energy,
+        )
+        i = 0
+        while samples.shape[0] < 24000:  # 0.5 s
+            # sometimes, the speaker embedding is so off that it leads to a practically empty audio
+            # then, we need to sample a new embedding
+            if i > 0 and i % 10 == 0:
+                mask = torch.zeros(speaker_embedding.shape[0]).float().random_(-40, 40).to(device)
+            else:
+                mask = torch.zeros(speaker_embedding.shape[0]).float().random_(-2, 2).to(device)
+            speaker_embedding = speaker_embedding * mask
+            tts_model.default_utterance_embedding = speaker_embedding.to(device)
+            samples = tts_model(
+                text=text,
+                text_is_phonemes=texts.is_phones,
+                durations=duration,
+                pitch=pitch,
+                energy=energy,
+            )
+            i += 1
+            if i > 30:
+                break
+        if i > 0:
+            logging.info(f'Synthesized utt in {i} takes')
+        samples = samples.detach().cpu().numpy()
+        start_silence = round(utt_prosody_dict['start_silence'] * tts_samplerate / pros_samplerate)
+        end_silence = round(utt_prosody_dict['end_silence'] * tts_samplerate / pros_samplerate)
+        if start_silence is not None:
+            start_sil = np.zeros(start_silence, dtype=np.float32)
+            samples = np.hstack((start_sil, samples))
+        if end_silence is not None:
+            end_sil = np.zeros(end_silence, dtype=np.float32)
+            samples = np.hstack((samples, end_sil))
+        if out_samplerate != tts_samplerate:
+            samples = resampy.resample(samples, tts_samplerate, out_samplerate)
+        path = result_dir / f'{utt}.wav'
+        sf.write(file=path, data=samples, samplerate=out_samplerate)
+        wav_scp.append(f'{utt} {path}')
+
+    path = result_dir / 'wav.scp'
+    logging.info(f'Writing file {path}')
+    path.write_text('\n'.join(wav_scp) + '\n', encoding='utf-8')

@@ -1,6 +1,7 @@
 from collections import defaultdict
 from pathlib import Path
 import torch
+from typing import Union
 
 from utils import read_kaldi_format, save_kaldi_format, create_clean_dir
 
@@ -79,7 +80,8 @@ class SpeakerEmbeddings:
         self.genders.extend([genders[idx] for idx in indices])
         self.original_speakers.extend([speakers[idx] for idx in indices])
 
-    def load_vectors(self, in_dir: Path):
+    def load_vectors(self, in_dir: Union[str, Path]):
+        in_dir = Path(in_dir)
         assert (in_dir / f'id2idx').exists() and (in_dir / f'speaker_vectors.pt').exists(), \
             f'speaker_vectors.pt and id2idx must exist in {in_dir}!'
 

@@ -1,5 +1,6 @@
+import logging
+from tqdm import tqdm
 from pathlib import Path
-
 from .anonymization import *
 from .prosody import Prosody
 
@@ -47,3 +48,13 @@ class ProsodyAnonymization:
             anon_prosody.save_prosody(out_dir=dataset_results_dir)
 
         return anon_prosody
+
+
+def anonymize_prosody(anonymization, prosody):
+    logging.info(f'Anonymize prosody of {len(prosody.utterances)} utterances...')
+    anon_prosody = Prosody()
+    for utt in tqdm(prosody.utterances.keys()):
+        prosodic_elements = prosody.get_instance(utt)
+        anon_prosodic_elements = anonymization.anonymize_values(**prosodic_elements)
+        anon_prosody.add_instance(utt, **anon_prosodic_elements)
+    return anon_prosody

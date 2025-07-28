@@ -103,6 +103,7 @@ class Text:
                           filename=out_dir / f'utt2spk{add_suffix}')
 
     def load_text(self, in_dir, add_suffix=None):
+        in_dir = Path(in_dir)
         self.new = False
         add_suffix = add_suffix if add_suffix is not None else ""
         utt_1, sentences = read_kaldi_format(filename=in_dir / f'text{add_suffix}', return_as_dict=False,

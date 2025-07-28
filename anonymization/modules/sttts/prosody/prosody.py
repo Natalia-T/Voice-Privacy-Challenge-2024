@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from pathlib import Path
 
 
 class Prosody:
@@ -100,6 +101,8 @@ class Prosody:
                 f.write(f'{utt}\n')
 
     def load_prosody(self, in_dir):
+        in_dir = Path(in_dir)
+
         self.new = False
 
         self.durations = torch.load(in_dir / 'duration.pt', map_location='cpu')
